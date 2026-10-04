@@ -1,8 +1,8 @@
 # WAR Index – Football Transfer Value
 
-A transparent Streamlit application that answers one question:
+A transparent Streamlit application that answers the question:
 
-**Was this football transfer good value?**
+**What is a footballer worth or are they good value?**
 
 ## What it does
 
@@ -53,19 +53,7 @@ streamlit run app.py
 
 The browser should open automatically.
 
-## Deploy to Streamlit Community Cloud
 
-1. Push this folder to a public GitHub repository.
-2. Go to https://share.streamlit.io and sign in.
-3. Click **New app**.
-4. Select the repository, branch, and set the main file path to `app.py`.
-5. Deploy.
-
-The app will be available at a URL of the form:
-
-`https://<your-app-name>.streamlit.app/`
-
-Exactly the same deployment path used for the FPL Fixture Value Index.
 
 ## Design principles (Era 1)
 
@@ -85,4 +73,4 @@ Exactly the same deployment path used for the FPL Fixture Value Index.
 ## Data sources
 
 - Performance: public Fantasy Premier League API (`bootstrap-static`)
-- Transfer fees: curated reported figures for the sample set (replace with your own cleaned database later)
+- Transfer fees: curated reported figures for the sample set (replace with own cleaned database later)
