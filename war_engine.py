@@ -625,6 +625,19 @@ SAMPLE_TRANSFERS: List[dict] = [
         "position_hint": "DEF",
         "notes": "Source: ESPN summer grades.",
     },
+    {
+        "web_name": "Anderson",
+        "player_name": "Eliott Anderson",
+        "from_club": "Nottingham",
+        "to_club": "Man City",
+        "fee_guaranteed_m": 116.0,
+        "fee_max_m": 116.0,
+        "fee_reported_m": 116.0,
+        "fee_confidence": "High",
+        "transfer_date": "2026-07-23",
+        "position_hint": "MID",
+        "notes": "One to watch.",
+    }
 ]
 
 
