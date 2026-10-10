@@ -637,7 +637,7 @@ SAMPLE_TRANSFERS: List[dict] = [
         "transfer_date": "2026-07-23",
         "position_hint": "MID",
         "notes": "One to watch.",
-    }
+    },
 ]
 
 
@@ -862,10 +862,14 @@ class WARIndexEngine:
                 xgi = 0.0
             xgi_per_90 = (xgi / per_90) if per_90 > 0 else 0.0
 
+            points_per_90 = (total_points / per_90) if per_90 >= 1.0 else 0.0
             pounds_per_90 = (fee * 1_000_000) / per_90 if per_90 > 0 else None
             pounds_per_goal = (fee * 1_000_000) / goals if goals > 0 else None
             pounds_per_contrib = (
                 (fee * 1_000_000) / goal_contrib if goal_contrib > 0 else None
+            )
+            pounds_per_point = (
+                (fee * 1_000_000) / total_points if total_points > 0 else None
             )
 
             rows.append({
@@ -894,9 +898,11 @@ class WARIndexEngine:
                 "assists_per_90": assists_per_90,
                 "goal_contrib_per_90": goal_contrib_per_90,
                 "xgi_per_90": xgi_per_90,
+                "points_per_90": points_per_90,
                 "pounds_per_90": pounds_per_90,
                 "pounds_per_goal": pounds_per_goal,
                 "pounds_per_contrib": pounds_per_contrib,
+                "pounds_per_point": pounds_per_point,
                 "low_sample": low_sample,
                 "price_now": price_now,
                 "ownership": ownership,
@@ -904,6 +910,7 @@ class WARIndexEngine:
                 "live_minutes": live_minutes,
                 "live_goals": live_goals,
                 "live_assists": live_assists,
+                "live_points": live_points,
             })
 
         df = pd.DataFrame(rows)
@@ -915,14 +922,19 @@ class WARIndexEngine:
         #    Cost base = original transfer fee
         #    Performance = cumulative PL output since the transfer
         # ------------------------------------------------------------------
+        # Production: official FPL points/90 is primary; G+A/90 remains secondary
         df["production_raw"] = (
-            df["goal_contrib_per_90"] * 0.6 + df["xgi_per_90"] * 0.4
+            df["points_per_90"] * 0.70 + df["goal_contrib_per_90"] * 0.30
         )
         df["production_score"] = self._minmax(df["production_raw"])
         df["volume_score"] = self._minmax(df["minutes"])
 
-        inv_cost = 1.0 / df["pounds_per_contrib"].replace(0, np.nan)
-        inv_cost = inv_cost.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        # Efficiency: lower fee per FPL point is better (fallback to fee per G+A)
+        inv_cost = 1.0 / df["pounds_per_point"].replace(0, np.nan)
+        inv_cost = inv_cost.replace([np.inf, -np.inf], np.nan)
+        inv_fallback = 1.0 / df["pounds_per_contrib"].replace(0, np.nan)
+        inv_fallback = inv_fallback.replace([np.inf, -np.inf], np.nan)
+        inv_cost = inv_cost.fillna(inv_fallback).fillna(0.0)
         df["efficiency_score"] = self._minmax(inv_cost)
 
         c = self.config
@@ -955,32 +967,40 @@ class WARIndexEngine:
         live_gc = (
             df["live_goals"].fillna(0.0) + df["live_assists"].fillna(0.0)
         )
-        live_per_90 = live_mins / 90.0
+        live_pts = df["live_points"].fillna(0.0)
+        live_per_90 = np.where(live_mins > 0, live_mins / 90.0, 0.0)
         live_gc_per_90 = np.where(live_per_90 > 0, live_gc / live_per_90, 0.0)
+        live_pts_per_90 = np.where(live_per_90 >= 1.0, live_pts / live_per_90, 0.0)
         live_xgi = df["xg"].fillna(0.0) + df["xa"].fillna(0.0)
         live_xgi_per_90 = np.where(live_per_90 > 0, live_xgi / live_per_90, 0.0)
 
         df["live_goal_contrib"] = live_gc
         df["live_goal_contrib_per_90"] = live_gc_per_90
+        df["live_points_per_90"] = live_pts_per_90
         df["live_xgi_per_90"] = live_xgi_per_90
 
-        # £ per contribution this season (using current FPL price)
+        # Efficiency vs current FPL price: prefer £ per FPL point
         price = df["price_now"].replace(0, np.nan)
+        df["price_per_point"] = np.where(
+            live_pts > 0, (price * 1_000_000) / live_pts, np.nan
+        )
         df["price_per_contrib"] = np.where(
-            live_gc > 0,
-            (price * 1_000_000) / live_gc,
-            np.nan,
+            live_gc > 0, (price * 1_000_000) / live_gc, np.nan
         )
 
+        # Production: FPL points/90 primary, G+A/90 secondary
         df["current_production_raw"] = (
-            pd.Series(live_gc_per_90) * 0.6
-            + pd.Series(live_xgi_per_90) * 0.4
+            pd.Series(live_pts_per_90) * 0.70
+            + pd.Series(live_gc_per_90) * 0.30
         )
         df["current_production_score"] = self._minmax(df["current_production_raw"])
         df["current_volume_score"] = self._minmax(live_mins)
 
-        inv_price = 1.0 / df["price_per_contrib"].replace(0, np.nan)
-        inv_price = inv_price.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        inv_price = 1.0 / df["price_per_point"].replace(0, np.nan)
+        inv_price = inv_price.replace([np.inf, -np.inf], np.nan)
+        inv_fb = 1.0 / df["price_per_contrib"].replace(0, np.nan)
+        inv_fb = inv_fb.replace([np.inf, -np.inf], np.nan)
+        inv_price = inv_price.fillna(inv_fb).fillna(0.0)
         df["current_efficiency_score"] = self._minmax(inv_price)
 
         df["current_value_score"] = (
@@ -1049,14 +1069,16 @@ class WARIndexEngine:
         live_gc = int(row.get("live_goal_contrib", 0))
         story = row.get("value_story", "")
 
+        pts = int(row.get("total_points", 0))
+        live_pts = int(row.get("live_points", 0))
         return (
             f"{row['player_name']} moved from {row['from_club']} to {row['to_club']} "
             f"for a guaranteed £{fee:.1f}m. "
             f"Since the transfer ({seasons} season(s)): {mins:,} minutes, "
-            f"{gc} goal contributions. Efficiency: {p90_str}. "
+            f"{pts} FPL points, {gc} goal contributions. Efficiency: {p90_str}. "
             f"**Transfer Value Score: {score:.0f}/100 ({label}).** "
-            f"This season: {live_mins} minutes, {live_gc} G+A at a current FPL price "
-            f"of £{price:.1f}m. "
+            f"This season: {live_mins} minutes, {live_pts} FPL points, {live_gc} G+A "
+            f"at a current FPL price of £{price:.1f}m. "
             f"**Current Value Score: {cur_score:.0f}/100 ({cur_label}).** "
             f"{story}."
         )
