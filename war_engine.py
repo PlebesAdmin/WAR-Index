@@ -249,8 +249,8 @@ SAMPLE_TRANSFERS: List[dict] = [
     },
     {
         "web_name": "Vuskovic",
-        "player_name": "Luca Vuskovic",
-        "from_club": "Totenham",
+        "player_name": "Luka Vuskovic",
+        "from_club": "Tottenham",
         "to_club": "Brighton",
         "fee_guaranteed_m": 46.0,
         "fee_max_m": 50.0,
@@ -668,23 +668,25 @@ class WARIndexEngine:
                 "ownership": ownership,
                 "seasons_counted": seasons_counted,
                 "live_minutes": live_minutes,
+                "live_goals": live_goals,
+                "live_assists": live_assists,
             })
 
         df = pd.DataFrame(rows)
         if df.empty:
             return df
 
-        # --- Value Score components (same transparent formula) ---
-        # Production: goal contributions + scaled xGI per 90
+        # ------------------------------------------------------------------
+        # 1. TRANSFER VALUE SCORE
+        #    Cost base = original transfer fee
+        #    Performance = cumulative PL output since the transfer
+        # ------------------------------------------------------------------
         df["production_raw"] = (
             df["goal_contrib_per_90"] * 0.6 + df["xgi_per_90"] * 0.4
         )
         df["production_score"] = self._minmax(df["production_raw"])
-
-        # Volume: cumulative minutes (reliability of the sample)
         df["volume_score"] = self._minmax(df["minutes"])
 
-        # Efficiency: lower £ per goal contribution is better
         inv_cost = 1.0 / df["pounds_per_contrib"].replace(0, np.nan)
         inv_cost = inv_cost.replace([np.inf, -np.inf], np.nan).fillna(0.0)
         df["efficiency_score"] = self._minmax(inv_cost)
@@ -695,32 +697,98 @@ class WARIndexEngine:
             + df["volume_score"] * c.volume_weight
             + df["efficiency_score"] * c.efficiency_weight
         )
-
-        # Soft penalty for low cumulative minutes
         df.loc[df["low_sample"], "value_score"] = (
             df.loc[df["low_sample"], "value_score"] * 0.7
         )
-
-        # Labels
         df["value_label"] = np.select(
-            [
-                df["value_score"] >= 70,
-                df["value_score"] >= 40,
-            ],
-            [
-                "Good value",
-                "Fair value",
-            ],
+            [df["value_score"] >= 70, df["value_score"] >= 40],
+            ["Good value", "Fair value"],
             default="Poor value",
         )
-
-        # Simple transfer premium illustration
         df["estimated_fair_value_m"] = (
             df["fee_guaranteed_m"] * (df["value_score"] / 50.0)
         ).round(1)
         df["transfer_premium_pct"] = (
             ((df["fee_guaranteed_m"] / df["estimated_fair_value_m"]) - 1.0) * 100
         ).round(0)
+
+        # ------------------------------------------------------------------
+        # 2. CURRENT VALUE SCORE
+        #    Cost base = current FPL price (£m)
+        #    Performance = this season only (live FPL data)
+        # ------------------------------------------------------------------
+        live_mins = df["live_minutes"].fillna(0.0)
+        live_gc = (
+            df["live_goals"].fillna(0.0) + df["live_assists"].fillna(0.0)
+        )
+        live_per_90 = live_mins / 90.0
+        live_gc_per_90 = np.where(live_per_90 > 0, live_gc / live_per_90, 0.0)
+        live_xgi = df["xg"].fillna(0.0) + df["xa"].fillna(0.0)
+        live_xgi_per_90 = np.where(live_per_90 > 0, live_xgi / live_per_90, 0.0)
+
+        df["live_goal_contrib"] = live_gc
+        df["live_goal_contrib_per_90"] = live_gc_per_90
+        df["live_xgi_per_90"] = live_xgi_per_90
+
+        # £ per contribution this season (using current FPL price)
+        price = df["price_now"].replace(0, np.nan)
+        df["price_per_contrib"] = np.where(
+            live_gc > 0,
+            (price * 1_000_000) / live_gc,
+            np.nan,
+        )
+
+        df["current_production_raw"] = (
+            pd.Series(live_gc_per_90) * 0.6
+            + pd.Series(live_xgi_per_90) * 0.4
+        )
+        df["current_production_score"] = self._minmax(df["current_production_raw"])
+        df["current_volume_score"] = self._minmax(live_mins)
+
+        inv_price = 1.0 / df["price_per_contrib"].replace(0, np.nan)
+        inv_price = inv_price.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        df["current_efficiency_score"] = self._minmax(inv_price)
+
+        df["current_value_score"] = (
+            df["current_production_score"] * c.production_weight
+            + df["current_volume_score"] * c.volume_weight
+            + df["current_efficiency_score"] * c.efficiency_weight
+        )
+        # Soft penalty when this-season sample is tiny
+        live_low = live_mins < 90
+        df.loc[live_low, "current_value_score"] = (
+            df.loc[live_low, "current_value_score"] * 0.7
+        )
+        df["current_value_label"] = np.select(
+            [df["current_value_score"] >= 70, df["current_value_score"] >= 40],
+            ["Good value", "Fair value"],
+            default="Poor value",
+        )
+
+        # Narrative flag: how the two scores relate
+        df["value_gap"] = (
+            df["current_value_score"] - df["value_score"]
+        ).round(0)
+        no_live = df["live_minutes"].fillna(0) < 1
+        df["value_story"] = np.select(
+            [
+                no_live & (df["value_score"] >= 55),
+                no_live,
+                (df["value_score"] >= 55) & (df["current_value_score"] >= 55),
+                (df["value_score"] >= 55) & (df["current_value_score"] < 40),
+                (df["value_score"] < 40) & (df["current_value_score"] >= 55),
+                (df["value_score"] < 40) & (df["current_value_score"] < 40),
+            ],
+            [
+                "Strong transfer (no current-season sample)",
+                "Limited current-season sample",
+                "Strong transfer & still delivering",
+                "Good transfer, currently underperforming",
+                "Expensive transfer, currently justifying price",
+                "Weak transfer & currently poor value",
+            ],
+            default="Mixed picture",
+        )
 
         df = df.sort_values(
             ["value_score", "goal_contrib"],
@@ -740,11 +808,21 @@ class WARIndexEngine:
         p90 = row["pounds_per_90"]
         p90_str = f"£{p90/1_000_000:.2f}m per 90" if pd.notna(p90) else "n/a"
 
+        cur_score = row.get("current_value_score", 0)
+        cur_label = row.get("current_value_label", "")
+        price = row.get("price_now", 0)
+        live_mins = int(row.get("live_minutes", 0))
+        live_gc = int(row.get("live_goal_contrib", 0))
+        story = row.get("value_story", "")
+
         return (
             f"{row['player_name']} moved from {row['from_club']} to {row['to_club']} "
             f"for a guaranteed £{fee:.1f}m. "
             f"Since the transfer ({seasons} season(s)): {mins:,} minutes, "
-            f"{gc} goal contributions. "
-            f"Efficiency: {p90_str}. "
-            f"Value Score: {score:.0f}/100 ({label})."
+            f"{gc} goal contributions. Efficiency: {p90_str}. "
+            f"**Transfer Value Score: {score:.0f}/100 ({label}).** "
+            f"This season: {live_mins} minutes, {live_gc} G+A at a current FPL price "
+            f"of £{price:.1f}m. "
+            f"**Current Value Score: {cur_score:.0f}/100 ({cur_label}).** "
+            f"{story}."
         )
