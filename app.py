@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("⚽ WAR Index")
 st.caption(
     "What is a footballer really worth? "
-    "A transparent Value Score for Premier League transfers — "
+    "A transparent Value Score for Fantasy Premier League transfers — "
     "performance delivered relative to the fee paid."
 )
 
@@ -22,20 +22,24 @@ with st.expander("How to use this tool (click to open)", expanded=False):
     st.markdown(
         """
         **WAR Index (Weighted Average Rating)** answers a single question:  
-        *Was this football transfer good value?*
+        *Was this footballer good value?*
 
-        **Version 1 method**
+        **Phase 1 method (with history)**
         - Guaranteed transfer fee is used as the cost base.
-        - Current-season output from the public FPL API (minutes, goals, assists, xG, xA).
+        - Performance is **cumulative Premier League output since the transfer date**,
+          not just the current season.
+        - Historical seasons come from the public
+          [vaastav FPL archive](https://github.com/vaastav/Fantasy-Premier-League);
+          the current season is taken from the live FPL API.
         - Three components combined into a 0–100 Value Score:
           - **Production** (40%) – goal contributions & expected involvement per 90
-          - **Volume** (25%) – minutes played (reliability of the sample)
+          - **Volume** (25%) – cumulative minutes (reliability of the sample)
           - **Efficiency** (35%) – output relative to the fee paid
         - Labels: **Good value** (≥70) · **Fair value** (40–69) · **Poor value** (<40)
 
         The sample set is a curated list of notable permanent Premier League transfers.
         Fees are reported/guaranteed figures and carry a confidence flag.
-        Low-minute players are softly penalised so small samples do not dominate rankings.
+        Players with fewer than ~900 cumulative minutes are softly penalised.
         """
     )
 
@@ -57,11 +61,11 @@ with st.sidebar:
     st.header("Filters")
 
     min_minutes = st.slider(
-        "Minimum minutes played this season",
+        "Minimum cumulative minutes since transfer",
         min_value=0,
-        max_value=1500,
+        max_value=5000,
         value=90,
-        step=30,
+        step=90,
         help="Players below this threshold are still shown but flagged as low sample.",
     )
 
@@ -181,6 +185,7 @@ table = display[
         "to_club",
         "position",
         "fee_guaranteed_m",
+        "seasons_counted",
         "minutes",
         "goal_contrib",
         "goal_contrib_per_90",
@@ -197,6 +202,7 @@ table.columns = [
     "Club",
     "Pos",
     "Fee £m",
+    "Seasons",
     "Minutes",
     "G+A",
     "G+A / 90",
