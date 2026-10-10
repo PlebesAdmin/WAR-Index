@@ -32,7 +32,7 @@ with st.expander("How to use this tool (click to open)", expanded=False):
         | **Current Value** | Current FPL price (£m) | This season only |
 
         Both scores use the same transparent formula (0–100):
-        - **Production** (40%) – goal contributions & expected involvement per 90
+        - **Production** (40%) – FPL points per 90 (primary) + goal contributions per 90
         - **Volume** (25%) – minutes (sample reliability)
         - **Efficiency** (35%) – output relative to the cost base
 
@@ -260,7 +260,7 @@ for _, row in display.iterrows():
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Fee paid", f"£{row['fee_guaranteed_m']:.1f}m")
         m2.metric("Minutes since transfer", f"{int(row['minutes']):,}")
-        m3.metric("G+A since transfer", f"{int(row['goal_contrib'])}")
+        m3.metric("FPL points since transfer", f"{int(row.get('total_points', 0))}")
         m4.metric("Transfer Value", f"{row['value_score']:.0f}/100")
 
         if "current_value_score" in row.index:
@@ -268,7 +268,7 @@ for _, row in display.iterrows():
             n1, n2, n3, n4 = st.columns(4)
             n1.metric("FPL price now", f"£{row['price_now']:.1f}m")
             n2.metric("Minutes this season", f"{int(row.get('live_minutes', 0))}")
-            n3.metric("G+A this season", f"{int(row.get('live_goal_contrib', 0))}")
+            n3.metric("FPL points this season", f"{int(row.get('live_points', 0))}")
             n4.metric("Current Value", f"{row['current_value_score']:.0f}/100")
 
         if "value_story" in row.index and row["value_story"]:
