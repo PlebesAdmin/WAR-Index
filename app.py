@@ -13,33 +13,35 @@ st.set_page_config(
 
 st.title("⚽ WAR Index")
 st.caption(
-    "What is a footballer really worth? "
-    "A transparent Value Score for Fantasy Premier League transfers — "
-    "performance delivered relative to the fee paid."
+    "Two questions, two scores: "
+    "Was the original transfer good value? "
+    "Is the player good value at their current price?"
 )
 
 with st.expander("How to use this tool (click to open)", expanded=False):
     st.markdown(
         """
-        **WAR Index (Weighted Average Rating)** answers a single question:  
-        *Was this footballer good value?*
+        **WAR Index** answers two related questions:
 
-        **Phase 1 method (with history)**
-        - Guaranteed transfer fee is used as the cost base.
-        - Performance is **cumulative Premier League output since the transfer date**,
-          not just the current season.
-        - Historical seasons come from the public
-          [vaastav FPL archive](https://github.com/vaastav/Fantasy-Premier-League);
-          the current season is taken from the live FPL API.
-        - Three components combined into a 0–100 Value Score:
-          - **Production** (40%) – goal contributions & expected involvement per 90
-          - **Volume** (25%) – cumulative minutes (reliability of the sample)
-          - **Efficiency** (35%) – output relative to the fee paid
-        - Labels: **Good value** (≥70) · **Fair value** (40–69) · **Poor value** (<40)
+        1. **Transfer Value** — Was the original transfer good value?
+        2. **Current Value** — Is the player good value *now* at their current FPL price?
 
-        The sample set is a curated list of notable permanent Premier League transfers.
-        Fees are reported/guaranteed figures and carry a confidence flag.
-        Players with fewer than ~900 cumulative minutes are softly penalised.
+        | Score | Cost base | Performance window |
+        |-------|-----------|--------------------|
+        | **Transfer Value** | Guaranteed transfer fee (£m) | All PL output since the transfer |
+        | **Current Value** | Current FPL price (£m) | This season only |
+
+        Both scores use the same transparent formula (0–100):
+        - **Production** (40%) – goal contributions & expected involvement per 90
+        - **Volume** (25%) – minutes (sample reliability)
+        - **Efficiency** (35%) – output relative to the cost base
+
+        Labels: **Good value** (≥70) · **Fair value** (40–69) · **Poor value** (<40)
+
+        Historical seasons come from the public
+        [vaastav FPL archive](https://github.com/vaastav/Fantasy-Premier-League);
+        the current season comes from the live FPL API.
+        Fees are curated guaranteed figures with a confidence flag.
         """
     )
 
@@ -120,31 +122,36 @@ if filtered.empty:
 display = filtered.head(top_n).copy()
 
 # ---------- Hero metrics ----------
-st.subheader("Key Transfer Value Insights")
+st.subheader("Key insights")
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Transfers analysed", f"{len(filtered)}")
-col2.metric("Best Value Score", f"{display.iloc[0]['value_score']:.0f}")
-col3.metric(
-    "Biggest bargain",
-    display.loc[display["value_score"].idxmax(), "web_name"]
-    if not display.empty else "—",
+col2.metric(
+    "Best Transfer Value",
+    f"{display['value_score'].max():.0f}",
+    help="Highest score for original fee vs cumulative performance",
 )
+if "current_value_score" in display.columns:
+    col3.metric(
+        "Best Current Value",
+        f"{display['current_value_score'].max():.0f}",
+        help="Highest score for current FPL price vs this-season performance",
+    )
+else:
+    col3.metric("Best Current Value", "—")
 col4.metric(
     "Highest fee in view",
     f"£{display['fee_guaranteed_m'].max():.0f}m",
 )
 
-# ---------- Three insight cards ----------
+# ---------- Snapshot cards ----------
 st.markdown("### Snapshot")
 
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.markdown("**🟢 Biggest Bargains**")
-    bargains = filtered.nlargest(5, "value_score")[
-        ["player_name", "fee_guaranteed_m", "value_score", "value_label"]
-    ]
+    st.markdown("**🟢 Best Transfer Value**")
+    bargains = filtered.nlargest(5, "value_score")
     for _, r in bargains.iterrows():
         st.write(
             f"{r['player_name']} — £{r['fee_guaranteed_m']:.0f}m · "
@@ -152,73 +159,62 @@ with c1:
         )
 
 with c2:
-    st.markdown("**🔴 Biggest Overpays**")
-    overpays = filtered.nsmallest(5, "value_score")[
-        ["player_name", "fee_guaranteed_m", "value_score", "value_label"]
-    ]
+    st.markdown("**💰 Best Current Value**")
+    if "current_value_score" in filtered.columns:
+        cur_best = filtered.nlargest(5, "current_value_score")
+        for _, r in cur_best.iterrows():
+            st.write(
+                f"{r['player_name']} — £{r['price_now']:.1f}m now · "
+                f"**{r['current_value_score']:.0f}/100**"
+            )
+    else:
+        st.write("Current value not available in this build.")
+
+with c3:
+    st.markdown("**🔴 Weakest Transfer Value**")
+    overpays = filtered.nsmallest(5, "value_score")
     for _, r in overpays.iterrows():
         st.write(
             f"{r['player_name']} — £{r['fee_guaranteed_m']:.0f}m · "
             f"**{r['value_score']:.0f}/100**"
         )
 
-with c3:
-    st.markdown("**🏆 Highest Value Scores**")
-    top = filtered.nlargest(5, "value_score")[
-        ["player_name", "fee_guaranteed_m", "value_score"]
-    ]
-    for _, r in top.iterrows():
-        st.write(
-            f"{r['player_name']} — {r['value_score']:.0f}/100 · £{r['fee_guaranteed_m']:.0f}m"
-        )
-
 # ---------- Main ranking table ----------
-st.subheader(f"Value Rankings · Top {len(display)}")
+st.subheader(f"Rankings · Top {len(display)}")
 
-chart_data = display.set_index("web_name")[["value_score"]]
-st.bar_chart(chart_data, color="#9BE33C")
+chart_cols = ["value_score"]
+if "current_value_score" in display.columns:
+    chart_cols.append("current_value_score")
+chart_data = display.set_index("web_name")[chart_cols].rename(columns={
+    "value_score": "Transfer Value",
+    "current_value_score": "Current Value",
+})
+st.bar_chart(chart_data, color=["#9BE33C", "#4FC3F7"])
 
-table = display[
-    [
-        "rank",
-        "player_name",
-        "to_club",
-        "position",
-        "fee_guaranteed_m",
-        "seasons_counted",
-        "minutes",
-        "goal_contrib",
-        "goal_contrib_per_90",
-        "pounds_per_contrib",
-        "value_score",
-        "value_label",
-        "transfer_premium_pct",
-    ]
-].copy()
-
-table.columns = [
-    "Rank",
-    "Player",
-    "Club",
-    "Pos",
-    "Fee £m",
-    "Seasons",
-    "Minutes",
-    "G+A",
-    "G+A / 90",
-    "£ per G+A",
-    "Value Score",
-    "Label",
-    "Premium %",
+_wanted = [
+    ("rank", "Rank"),
+    ("player_name", "Player"),
+    ("to_club", "Club"),
+    ("position", "Pos"),
+    ("fee_guaranteed_m", "Fee £m"),
+    ("price_now", "FPL £m"),
+    ("seasons_counted", "Seasons"),
+    ("minutes", "Mins (all)"),
+    ("goal_contrib", "G+A (all)"),
+    ("live_minutes", "Mins (now)"),
+    ("live_goal_contrib", "G+A (now)"),
+    ("value_score", "Transfer Value"),
+    ("current_value_score", "Current Value"),
+    ("value_story", "Story"),
 ]
+_present = [(src, label) for src, label in _wanted if src in display.columns]
+table = display[[src for src, _ in _present]].copy()
+table.columns = [label for _, label in _present]
 
-# Format money columns for display
 def fmt_money(x):
     if pd.isna(x):
         return "—"
     return f"£{x/1_000_000:.1f}m"
-
-table["£ per G+A"] = table["£ per G+A"].apply(fmt_money)
 
 st.dataframe(
     table,
@@ -226,9 +222,9 @@ st.dataframe(
     hide_index=True,
     column_config={
         "Fee £m": st.column_config.NumberColumn(format="£%.1f"),
-        "G+A / 90": st.column_config.NumberColumn(format="%.2f"),
-        "Value Score": st.column_config.NumberColumn(format="%.0f"),
-        "Premium %": st.column_config.NumberColumn(format="%+.0f%%"),
+        "FPL £m": st.column_config.NumberColumn(format="£%.1f"),
+        "Transfer Value": st.column_config.NumberColumn(format="%.0f"),
+        "Current Value": st.column_config.NumberColumn(format="%.0f"),
     },
 )
 
@@ -242,36 +238,52 @@ for _, row in display.iterrows():
         "Fair value": "🟡",
         "Poor value": "🔴",
     }.get(row["value_label"], "⚪")
+    cur_icon = {
+        "Good value": "🟢",
+        "Fair value": "🟡",
+        "Poor value": "🔴",
+    }.get(row.get("current_value_label", ""), "⚪")
+
+    cur_txt = ""
+    if "current_value_score" in row.index and pd.notna(row["current_value_score"]):
+        cur_txt = (
+            f" · Current {row['current_value_score']:.0f}/100 {cur_icon}"
+        )
 
     with st.expander(
         f"#{int(row['rank'])} {row['player_name']} — "
-        f"£{row['fee_guaranteed_m']:.0f}m → Value Score {row['value_score']:.0f}/100 {label_icon}"
+        f"Transfer {row['value_score']:.0f}/100 {label_icon}{cur_txt}"
     ):
         st.write(engine.explain_player(row))
 
+        st.markdown("**Transfer value (fee vs career since move)**")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Minutes", f"{int(row['minutes'])}")
-        m2.metric("Goals + Assists", f"{int(row['goal_contrib'])}")
-        m3.metric("G+A per 90", f"{row['goal_contrib_per_90']:.2f}")
-        m4.metric(
-            "£ per G+A",
-            fmt_money(row["pounds_per_contrib"]),
-        )
+        m1.metric("Fee paid", f"£{row['fee_guaranteed_m']:.1f}m")
+        m2.metric("Minutes since transfer", f"{int(row['minutes']):,}")
+        m3.metric("G+A since transfer", f"{int(row['goal_contrib'])}")
+        m4.metric("Transfer Value", f"{row['value_score']:.0f}/100")
+
+        if "current_value_score" in row.index:
+            st.markdown("**Current value (FPL price vs this season)**")
+            n1, n2, n3, n4 = st.columns(4)
+            n1.metric("FPL price now", f"£{row['price_now']:.1f}m")
+            n2.metric("Minutes this season", f"{int(row.get('live_minutes', 0))}")
+            n3.metric("G+A this season", f"{int(row.get('live_goal_contrib', 0))}")
+            n4.metric("Current Value", f"{row['current_value_score']:.0f}/100")
+
+        if "value_story" in row.index and row["value_story"]:
+            st.info(row["value_story"])
 
         st.write(
-            f"**Component scores** — "
+            f"**Transfer components** — "
             f"Production {row['production_score']:.0f} · "
             f"Volume {row['volume_score']:.0f} · "
             f"Efficiency {row['efficiency_score']:.0f}"
         )
-        st.write(
-            f"Estimated fair value (illustrative): £{row['estimated_fair_value_m']:.1f}m · "
-            f"Transfer premium: {row['transfer_premium_pct']:+.0f}%"
-        )
         if row["low_sample"]:
-            st.warning("Low minutes sample — score has been softly penalised.")
+            st.warning("Low cumulative minutes — Transfer Value softly penalised.")
         if row["notes"]:
-            st.info(row["notes"])
+            st.caption(row["notes"])
         st.caption(
             f"Fee confidence: {row['fee_confidence']} · "
             f"Reported / max fee: £{row['fee_reported_m']:.1f}m / £{row['fee_max_m']:.1f}m"
